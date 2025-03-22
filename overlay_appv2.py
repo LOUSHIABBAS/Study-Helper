@@ -10,17 +10,7 @@ from PIL import ImageGrab
 from dotenv import load_dotenv  # You'll need to install this: pip install python-dotenv
 import sys
 from pathlib import Path
-
-# Load environment variables
-load_dotenv()
-
-# Configure Tesseract path
-pytesseract.pytesseract.tesseract_cmd = r"C:\Users\loush\AppData\Local\Programs\Tesseract-OCR\tesseract.exe"  # Adjust path as needed
-
-# Configure OpenAI
-client = OpenAI(
-    api_key=os.getenv("OPENAI_API_KEY")
-)
+import json
 
 # Define asset paths
 SCRIPT_DIR = Path(__file__).parent
@@ -33,17 +23,303 @@ ASSETS_DIR.mkdir(exist_ok=True)
 IMAGES_DIR.mkdir(exist_ok=True)
 GIFS_DIR.mkdir(exist_ok=True)
 
+# Load environment variables
+load_dotenv()
+
+# Configure Tesseract path
+pytesseract.pytesseract.tesseract_cmd = r"C:\Users\loush\AppData\Local\Programs\Tesseract-OCR\tesseract.exe"
+
+# Configure OpenAI
+import json
+
+def get_api_key():
+    try:
+        with open("config.json", "r") as f:
+            config = json.load(f)
+            return config.get("api_key")
+    except (FileNotFoundError, json.JSONDecodeError):
+        return None
+
+api_key = get_api_key()
+if api_key:
+    client = OpenAI(api_key=api_key)
+else:
+    client = None  # Will be initialized later when API key is set
+
+class APIKeyManager(ctk.CTkToplevel):
+    def __init__(self, parent, callback, is_first_time=False):
+        super().__init__(parent)
+        
+        self.callback = callback
+        self.is_first_time = is_first_time
+        self.title("OpenAI API Key Setup")
+        self.geometry("600x500")
+        
+        # Center the window on screen
+        screen_width = self.winfo_screenwidth()
+        screen_height = self.winfo_screenheight()
+        x = (screen_width - 600) // 2
+        y = (screen_height - 500) // 2
+        self.geometry(f"600x500+{x}+{y}")
+        
+        # Handle window closing differently for first-time users
+        if is_first_time:
+            self.protocol("WM_DELETE_WINDOW", self.on_first_time_closing)
+        else:
+            self.protocol("WM_DELETE_WINDOW", self.on_closing)
+        
+        # Make it stay on top and set minimum size
+        self.attributes('-topmost', True)
+        self.minsize(600, 500)
+        self.configure(fg_color="#2d2d2d")
+        
+        # Create widgets
+        self.setup_widgets()
+
+    def setup_widgets(self):
+        main_container = ctk.CTkFrame(
+            self,
+            fg_color="#2d2d2d",
+            corner_radius=20,
+        )
+        main_container.pack(fill="both", expand=True, padx=20, pady=20)
+        
+        # Only show back button if not first time
+        if not self.is_first_time:
+            self.back_btn = ctk.CTkButton(
+                main_container,
+                text="← Back",
+                command=self.on_closing,
+                width=100,
+                height=35,
+                corner_radius=8,
+                fg_color="#4a9eff",
+                hover_color="#2d7de0",
+                font=("Arial", 12, "bold"),
+                border_width=1,
+                border_color="#6ab0ff"
+            )
+            self.back_btn.place(relx=0.02, rely=0.02)
+
+        # Title
+        title = ctk.CTkLabel(
+            main_container,
+            text="OpenAI API Key Setup",
+            font=("Arial Bold", 28),
+            text_color="#4a9eff"
+        )
+        title.pack(pady=(30, 20))
+        
+        # Instructions
+        instructions = ctk.CTkLabel(
+            main_container,
+            text="Please enter your OpenAI API Key below:",
+            font=("Arial", 16),
+            wraplength=500,
+            text_color="#e0e0e0"
+        )
+        instructions.pack(pady=(0, 20))
+        
+        # API Key entry
+        self.api_key_entry = ctk.CTkEntry(
+            main_container,
+            width=400,
+            height=45,
+            font=("Arial", 14),
+            show="•",
+            fg_color="#232323",
+            border_color="#4a4a4a",
+            text_color="#ffffff"
+        )
+        self.api_key_entry.pack(pady=(0, 15))
+        
+        # Show/Hide button with blue styling
+        self.show_hide_btn = ctk.CTkButton(
+            main_container,
+            text="Show API Key",
+            command=self.toggle_api_key_visibility,
+            width=150,
+            height=35,
+            font=("Arial", 13),
+            fg_color="#4a9eff",  # Changed to blue
+            hover_color="#2d7de0",
+            border_width=1,
+            border_color="#6ab0ff"
+        )
+        self.show_hide_btn.pack(pady=(0, 20))
+        
+        # Save button
+        save_btn = ctk.CTkButton(
+            main_container,
+            text="Save API Key",
+            command=self.save_api_key,
+            width=200,
+            height=45,
+            font=("Arial Bold", 14),
+            fg_color="#4a9eff",
+            hover_color="#2d7de0"
+        )
+        save_btn.pack(pady=(0, 20))
+        
+        # Status label
+        self.status_label = ctk.CTkLabel(
+            main_container,
+            text="",
+            font=("Arial", 13),
+            wraplength=400
+        )
+        self.status_label.pack(pady=(0, 20))
+
+    def toggle_api_key_visibility(self):
+        if self.api_key_entry.cget("show") == "":
+            self.api_key_entry.configure(show="•")
+            self.show_hide_btn.configure(text="Show API Key")
+        else:
+            self.api_key_entry.configure(show="")
+            self.show_hide_btn.configure(text="Hide API Key")
+
+    def save_api_key(self):
+        api_key = self.api_key_entry.get().strip()
+        
+        if not api_key:
+            self.status_label.configure(
+                text="Please enter an API key",
+                text_color="red"
+            )
+            return
+            
+        if not api_key.startswith("sk-"):
+            self.status_label.configure(
+                text="Invalid API key format. Should start with 'sk-'",
+                text_color="red"
+            )
+            return
+        
+        try:
+            # Test the API key
+            client = OpenAI(api_key=api_key)
+            # Try a simple API call that doesn't cost tokens
+            client.models.list()
+            
+            # If we get here, the API key is valid
+            # Save to config.json instead of .env
+            config = {"api_key": api_key}
+            with open("config.json", "w") as f:
+                json.dump(config, f)
+            
+            self.status_label.configure(
+                text="API key saved successfully! Restarting application...",
+                text_color="green"
+            )
+            
+            if self.is_first_time:
+                # Wait 1 second then restart
+                self.after(1000, self.restart_application)
+            else:
+                # Regular update behavior
+                self.callback(True)
+                self.after(1000, self.destroy)
+            
+        except Exception as e:
+            error_msg = str(e).lower()
+            if "invalid api key" in error_msg or "incorrect api key" in error_msg:
+                self.status_label.configure(
+                    text="Invalid API key. Please check and try again.",
+                    text_color="red"
+                )
+            elif "expired" in error_msg:
+                self.status_label.configure(
+                    text="API key has expired. Please provide a new one.",
+                    text_color="red"
+                )
+            else:
+                self.status_label.configure(
+                    text=f"Error: {str(e)}",
+                    text_color="red"
+                )
+            self.callback(False)
+
+    def restart_application(self):
+        """Restart the entire application"""
+        self.destroy()
+        self.master.destroy()
+        
+        # Start a new process
+        import subprocess
+        script_path = sys.argv[0]
+        subprocess.Popen([sys.executable, script_path])
+        
+        # Exit current process
+        sys.exit()
+
+    def on_first_time_closing(self):
+        """Handle window closing for first-time users"""
+        self.destroy()
+        self.master.destroy()  # Close the entire application
+        sys.exit()  # Ensure complete termination
+
+    def on_closing(self):
+        """Handle window closing for returning users"""
+        self.callback(False)
+        self.destroy()
+        self.master.deiconify()
+
 class StudyHelper(ctk.CTk):
     def __init__(self):
         super().__init__()
+        
+        # Check for API key before proceeding
+        if not self.check_api_key():
+            self.withdraw()  # Hide main window
+            self.api_key_manager = APIKeyManager(self, self.on_api_key_setup, is_first_time=True)
+            return
+        
+        self.setup_main_window()
 
+    def check_api_key(self):
+        """Check if API key exists and is valid"""
+        try:
+            # Load from config.json instead of .env
+            import json
+            try:
+                with open("config.json", "r") as f:
+                    config = json.load(f)
+                    api_key = config.get("api_key")
+            except FileNotFoundError:
+                return False
+            
+            if not api_key:
+                return False
+                
+            if not api_key.startswith("sk-"):
+                return False
+            
+            client = OpenAI(api_key=api_key)
+            # Try a simple API call that doesn't cost tokens
+            client.models.list()
+            return True
+        except Exception as e:
+            print(f"API key validation error: {str(e)}")
+            return False
+
+    def on_api_key_setup(self, success):
+        """Callback for API key setup"""
+        if success:
+            self.deiconify()  # Show main window
+            self.setup_main_window()
+        else:
+            # Keep the API key manager open
+            pass
+
+    def setup_main_window(self):
+        """Setup the main application window"""
         # Window setup
         self.geometry("800x600")
         self.title("Study Helper")
         self.wm_attributes("-topmost", True)
-        self.configure(fg_color="#1a1a1a")  # Darker background
+        self.configure(fg_color="#1a1a1a")
 
-        # Initialize GIF handling (moved up)
+        # Initialize GIF handling
         self.gif_frames = {}
         self.current_frames = {}
         self.is_playing = {}
@@ -66,7 +342,7 @@ class StudyHelper(ctk.CTk):
         )
         self.background_gif.pack(fill="both", expand=True)
         
-        # Start playing background GIF
+        # Re-enable the background animation
         self.play_gif("loading", self.background_gif)
 
         # Main frame with rounded corners and padding
@@ -76,18 +352,34 @@ class StudyHelper(ctk.CTk):
             corner_radius=20,
             border_width=2,
             border_color="#4a4a4a",
-            bg_color="#1a1a1a"  # Match the window's background color
+            bg_color="#1a1a1a"
         )
         self.main_frame.place(relx=0.5, rely=0.5, anchor="center", relwidth=0.9, relheight=0.9)
+
+        # Add API Key button at the top of main_frame with proper alignment
+        self.api_key_btn = ctk.CTkButton(
+            self.main_frame,
+            text="Update API Key",
+            command=self.show_api_key_manager,
+            width=120,
+            height=35,
+            corner_radius=8,
+            fg_color="#4a9eff",
+            hover_color="#2d7de0",
+            font=("Arial", 12, "bold"),
+            border_width=1,
+            border_color="#6ab0ff"
+        )
+        self.api_key_btn.place(relx=0.95, rely=0.03, anchor="ne")  # Adjusted position to match padding
 
         # Title with animation
         self.title_label = ctk.CTkLabel(
             self.main_frame,
             text="Study Helper",
-            font=("Arial Bold", 32),  # Larger font
-            text_color="#4a9eff"  # Nice blue color
+            font=("Arial Bold", 32),
+            text_color="#4a9eff"
         )
-        self.title_label.pack(pady=(40, 20))  # More vertical spacing
+        self.title_label.pack(pady=(40, 20))
 
         # Question display with better styling
         self.question_label = ctk.CTkLabel(
@@ -292,7 +584,7 @@ class StudyHelper(ctk.CTk):
             self.update_status(f"Error: {str(e)}", "#ff6b6b")
 
     def get_help(self):
-        """Get help with current question using GPT-4 Vision"""
+        """Get help with current question using GPT-4o"""
         if not hasattr(self, 'last_screenshot'):
             self.update_status("Please capture a question first", "#ff6b6b")
             return
@@ -365,20 +657,6 @@ class StudyHelper(ctk.CTk):
             )
             self.send_btn.pack(side="right")
             
-            # Add a clear chat button
-            self.clear_btn = ctk.CTkButton(
-                self.chat_frame,
-                text="Clear",
-                command=self._clear_chat,
-                font=("Arial Bold", 13),
-                width=60,
-                height=40,
-                corner_radius=8,
-                fg_color="#666666",
-                hover_color="#555555"
-            )
-            self.clear_btn.pack(side="right", padx=5)
-            
             # Store conversation history
             self.conversation_history = []
             
@@ -410,15 +688,23 @@ class StudyHelper(ctk.CTk):
             self.send_message()
             return "break"  # Prevents default newline
 
-    def _clear_chat(self):
-        """Clear the chat history"""
-        self.answer_text.delete("0.0", "end")
-        self.conversation_history = []
-        self._process_image()  # Restart with initial analysis
-
     def _process_image(self):
         """Process the initial image analysis"""
         try:
+            # Get API key from config.json
+            import json
+            try:
+                with open("config.json", "r") as f:
+                    config = json.load(f)
+                    api_key = config.get("api_key")
+            except FileNotFoundError:
+                self.update_status("API key not found. Please update it.", "#ff6b6b")
+                self.show_api_key_manager()
+                return
+
+            # Create new client instance with the API key
+            client = OpenAI(api_key=api_key)
+
             # Convert PIL Image to bytes and encode
             import io, base64
             img_byte_arr = io.BytesIO()
@@ -454,6 +740,9 @@ class StudyHelper(ctk.CTk):
                 }
             ]
             
+            # Load environment variables again in case they were updated
+            load_dotenv()
+            
             response = client.chat.completions.create(
                 model="gpt-4o",
                 messages=initial_messages,
@@ -475,11 +764,30 @@ class StudyHelper(ctk.CTk):
             self.update_status("Analysis complete! You can now chat for more help.", "#4caf50")
             
         except Exception as e:
-            self.update_status(f"Error: {str(e)}", "#ff6b6b")
+            error_msg = str(e)
+            if "API key" in error_msg or "authentication" in error_msg.lower():
+                self.update_status("API key is invalid or expired. Please update it.", "#ff6b6b")
+                self.show_api_key_manager()
+            else:
+                self.update_status(f"Error: {error_msg}", "#ff6b6b")
 
     def send_message(self):
         """Send a message and get response"""
         try:
+            # Get API key from config.json
+            import json
+            try:
+                with open("config.json", "r") as f:
+                    config = json.load(f)
+                    api_key = config.get("api_key")
+            except FileNotFoundError:
+                self.update_status("API key not found. Please update it.", "#ff6b6b")
+                self.show_api_key_manager()
+                return
+
+            # Create new client instance with the API key
+            client = OpenAI(api_key=api_key)
+
             # Get user message
             user_message = self.chat_input.get("0.0", "end").strip()
             if user_message == "Type your question here..." or not user_message:
@@ -487,9 +795,9 @@ class StudyHelper(ctk.CTk):
                 
             # Clear input properly
             self.chat_input.delete("0.0", "end")
-            self.chat_input.configure(text_color="#e0e0e0")  # Keep text color light
-            self.chat_input.mark_set("insert", "0.0")  # Force cursor to beginning
-            self.chat_input.focus_set()  # Keep focus on input box
+            self.chat_input.configure(text_color="#e0e0e0")
+            self.chat_input.mark_set("insert", "0.0")
+            self.chat_input.focus_set()
             
             # Update status to show processing
             self.update_status("Processing your question...", "#2196f3")
@@ -497,9 +805,12 @@ class StudyHelper(ctk.CTk):
             # Add user message to conversation
             self.conversation_history.append({"role": "user", "content": user_message})
             
-            # Get AI response first
+            # Load environment variables again in case they were updated
+            load_dotenv()
+            
+            # Get AI response
             response = client.chat.completions.create(
-                model="gpt-4o",  # Fixed model name
+                model="gpt-4o",
                 messages=self.conversation_history,
                 max_tokens=500
             )
@@ -511,8 +822,8 @@ class StudyHelper(ctk.CTk):
             self.conversation_history.append({"role": "assistant", "content": ai_message})
             
             # Update display with user message in a different color
-            self.answer_text.tag_config("user", foreground="#4a9eff")  # Bright blue for user
-            self.answer_text.tag_config("assistant", foreground="#50c878")  # Green for assistant
+            self.answer_text.tag_config("user", foreground="#4a9eff")
+            self.answer_text.tag_config("assistant", foreground="#50c878")
             
             # Enable text widget temporarily to insert text
             self.answer_text.configure(state="normal")
@@ -521,13 +832,18 @@ class StudyHelper(ctk.CTk):
             self.answer_text.insert("end", "\n\nAssistant: ", "assistant")
             self.answer_text.insert("end", ai_message, "assistant")
             self.answer_text.see("end")
-            self.answer_text.configure(state="disabled")  # Make it read-only again
+            self.answer_text.configure(state="disabled")
             
             # Update status
             self.update_status("Ready for your next question!", "#4caf50")
             
         except Exception as e:
-            self.update_status(f"Error: {str(e)}", "#ff6b6b")
+            error_msg = str(e)
+            if "API key" in error_msg or "authentication" in error_msg.lower():
+                self.update_status("API key is invalid or expired. Please update it.", "#ff6b6b")
+                self.show_api_key_manager()
+            else:
+                self.update_status(f"Error: {error_msg}", "#ff6b6b")
 
     def _animate_window_expansion(self):
         """Animate the window expansion smoothly"""
@@ -643,6 +959,11 @@ class StudyHelper(ctk.CTk):
                 
                 # Exactly 16ms for consistent 60 FPS
                 self.after(16, lambda: self._animate_gif(name, widget))
+
+    def show_api_key_manager(self):
+        """Show the API key manager for updates"""
+        self.withdraw()  # Hide main window
+        self.api_key_manager = APIKeyManager(self, self.on_api_key_setup, is_first_time=False)
 
 if __name__ == "__main__":
     ctk.set_appearance_mode("dark")
