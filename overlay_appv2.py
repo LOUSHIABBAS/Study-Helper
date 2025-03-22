@@ -1,7 +1,10 @@
 import customtkinter as ctk
 import pyautogui
 import pytesseract
-from openai import OpenAI
+try:
+    from openai import OpenAI  # Updated import statement
+except ImportError:
+    import openai  # Fallback import
 from PIL import Image, ImageSequence
 import subprocess
 import tempfile
@@ -27,11 +30,25 @@ GIFS_DIR.mkdir(exist_ok=True)
 load_dotenv()
 
 # Configure Tesseract path
-pytesseract.pytesseract.tesseract_cmd = r"C:\Users\loush\AppData\Local\Programs\Tesseract-OCR\tesseract.exe"
+def get_tesseract_path():
+    default_paths = [
+        r"C:\Program Files\Tesseract-OCR\tesseract.exe",
+        r"C:\Program Files (x86)\Tesseract-OCR\tesseract.exe",
+        r"C:\Users\loush\AppData\Local\Programs\Tesseract-OCR\tesseract.exe"
+    ]
+    
+    for path in default_paths:
+        if os.path.exists(path):
+            return path
+    return None
+
+tesseract_path = get_tesseract_path()
+if tesseract_path:
+    pytesseract.pytesseract.tesseract_cmd = tesseract_path
+else:
+    print("Warning: Tesseract not found. OCR functionality may be limited.")
 
 # Configure OpenAI
-import json
-
 def get_api_key():
     try:
         with open("config.json", "r") as f:
@@ -42,9 +59,10 @@ def get_api_key():
 
 api_key = get_api_key()
 if api_key:
-    client = OpenAI(api_key=api_key)
-else:
-    client = None  # Will be initialized later when API key is set
+    try:
+        client = OpenAI(api_key=api_key)  # Create client instance
+    except NameError:
+        openai.api_key = api_key  # Fallback to old style
 
 class APIKeyManager(ctk.CTkToplevel):
     def __init__(self, parent, callback, is_first_time=False):
@@ -197,9 +215,9 @@ class APIKeyManager(ctk.CTkToplevel):
         
         try:
             # Test the API key
-            client = OpenAI(api_key=api_key)
+            openai.api_key = api_key
             # Try a simple API call that doesn't cost tokens
-            client.models.list()
+            openai.api_key = api_key
             
             # If we get here, the API key is valid
             # Save to config.json instead of .env
@@ -207,18 +225,36 @@ class APIKeyManager(ctk.CTkToplevel):
             with open("config.json", "w") as f:
                 json.dump(config, f)
             
-            self.status_label.configure(
-                text="API key saved successfully! Restarting application...",
-                text_color="green"
-            )
-            
-            if self.is_first_time:
-                # Wait 1 second then restart
-                self.after(1000, self.restart_application)
+            # Check if running as exe or script
+            if getattr(sys, 'frozen', False):
+                # Running as exe
+                self.status_label.configure(
+                    text="API key saved successfully! Please close and reopen the application.",
+                    text_color="green"
+                )
+                # Add a button to close the application
+                close_btn = ctk.CTkButton(
+                    self,
+                    text="Close Application",
+                    command=lambda: sys.exit(),
+                    width=200,
+                    height=45,
+                    font=("Arial Bold", 14),
+                    fg_color="#4a9eff",
+                    hover_color="#2d7de0"
+                )
+                close_btn.pack(pady=(20, 0))
             else:
-                # Regular update behavior
-                self.callback(True)
-                self.after(1000, self.destroy)
+                # Running as script - keep original restart behavior
+                self.status_label.configure(
+                    text="API key saved successfully! Restarting application...",
+                    text_color="green"
+                )
+                if self.is_first_time:
+                    self.after(1000, self.restart_application)
+                else:
+                    self.callback(True)
+                    self.after(1000, self.destroy)
             
         except Exception as e:
             error_msg = str(e).lower()
@@ -268,6 +304,11 @@ class StudyHelper(ctk.CTk):
     def __init__(self):
         super().__init__()
         
+        # Set window icon
+        icon_path = IMAGES_DIR / "icon.ico"
+        if icon_path.exists():
+            self.iconbitmap(icon_path)
+        
         # Check for API key before proceeding
         if not self.check_api_key():
             self.withdraw()  # Hide main window
@@ -294,9 +335,9 @@ class StudyHelper(ctk.CTk):
             if not api_key.startswith("sk-"):
                 return False
             
-            client = OpenAI(api_key=api_key)
+            openai.api_key = api_key
             # Try a simple API call that doesn't cost tokens
-            client.models.list()
+            openai.api_key = api_key
             return True
         except Exception as e:
             print(f"API key validation error: {str(e)}")
@@ -703,7 +744,7 @@ class StudyHelper(ctk.CTk):
                 return
 
             # Create new client instance with the API key
-            client = OpenAI(api_key=api_key)
+            openai.api_key = api_key
 
             # Convert PIL Image to bytes and encode
             import io, base64
@@ -743,22 +784,32 @@ class StudyHelper(ctk.CTk):
             # Load environment variables again in case they were updated
             load_dotenv()
             
-            response = client.chat.completions.create(
-                model="gpt-4o",
-                messages=initial_messages,
-                max_tokens=500
-            )
+            # Update the API call based on which import was successful
+            try:
+                response = client.chat.completions.create(
+                    model="gpt-4o",
+                    messages=initial_messages,
+                    max_tokens=500
+                )
+                ai_message = response.choices[0].message.content
+            except NameError:
+                response = openai.ChatCompletion.create(
+                    model="gpt-4o",
+                    messages=initial_messages,
+                    max_tokens=500
+                )
+                ai_message = response['choices'][0]['message']['content']
             
             # Store the conversation
             self.conversation_history = initial_messages + [
-                {"role": "assistant", "content": response.choices[0].message.content}
+                {"role": "assistant", "content": ai_message}
             ]
             
             # Enable text widget temporarily to insert text
             self.answer_text.configure(state="normal")
             self.answer_text.delete("0.0", "end")
-            self.answer_text.insert("0.0", response.choices[0].message.content, "assistant")
-            self.answer_text.configure(state="disabled")  # Make it read-only again
+            self.answer_text.insert("0.0", ai_message, "assistant")
+            self.answer_text.configure(state="disabled")
             
             # Update status
             self.update_status("Analysis complete! You can now chat for more help.", "#4caf50")
@@ -786,7 +837,7 @@ class StudyHelper(ctk.CTk):
                 return
 
             # Create new client instance with the API key
-            client = OpenAI(api_key=api_key)
+            openai.api_key = api_key
 
             # Get user message
             user_message = self.chat_input.get("0.0", "end").strip()
@@ -808,15 +859,21 @@ class StudyHelper(ctk.CTk):
             # Load environment variables again in case they were updated
             load_dotenv()
             
-            # Get AI response
-            response = client.chat.completions.create(
-                model="gpt-4o",
-                messages=self.conversation_history,
-                max_tokens=500
-            )
-            
-            # Get the AI message
-            ai_message = response.choices[0].message.content
+            # Update the API call based on which import was successful
+            try:
+                response = client.chat.completions.create(
+                    model="gpt-4o",
+                    messages=self.conversation_history,
+                    max_tokens=500
+                )
+                ai_message = response.choices[0].message.content
+            except NameError:
+                response = openai.ChatCompletion.create(
+                    model="gpt-4o",
+                    messages=self.conversation_history,
+                    max_tokens=500
+                )
+                ai_message = response['choices'][0]['message']['content']
             
             # Add response to conversation
             self.conversation_history.append({"role": "assistant", "content": ai_message})

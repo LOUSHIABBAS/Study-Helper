@@ -1,0 +1,9 @@
+customtkinter
+pyautogui
+pytesseract
+openai==0.28.1
+Pillow
+python-dotenv
+pyinstaller
+pydantic
+typing-extensions
