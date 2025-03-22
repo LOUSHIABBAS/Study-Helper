@@ -1,6 +1,6 @@
 # Author: Ali Abbas
 
-# Program: ExamEZ
+# Program: Study Helper
 
 # About
  Homework / Assignment AI "Assistant"
